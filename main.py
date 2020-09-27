@@ -1,55 +1,46 @@
 import json, requests, time
 
-print "--- Discord Channel-Message Deleter ---"
-print "clears all of your messages in a channel"
-print "in order for this script to work properly the channel id, auth token, and username is required"
-username = raw_input("Username: ")
-auth_token = raw_input("Auth Token: ")
-channel_id = raw_input("Channel ID: ")
-delete_from_all_users = True if raw_input("Delete messages from other users (y/n): ") == "y" else False
+print("--- Discord Channel-Message Deleter ---")
+print("Removes messages from a channel which contains defined words")
+auth_token = input("Auth Token: ")
+channel_id = input("Channel ID: ")
+words = input("Words (seperate with whitespaces): ").split(" ")
 
-def get_all_messages(auth, id, last="", prev=[]): # recursively find all messages in a channel, 100 at a time
-    if not last: # first method call, start from beginning (might be able to remove)
-        messages = json.loads(requests.get("http://canary.discordapp.com/api/v6/channels/" + id + "/messages", headers={"authorization": auth}, params={"limit": 100}).content)
-    else:
+def get_all_messages(auth, id):
+    prev = []
+    # lazy way of getting the first messages. Channels with too many messages lead to "recursion depth exceeded".
+    messages = json.loads(requests.get("http://canary.discordapp.com/api/v6/channels/" + id + "/messages", headers={"authorization": auth}, params={"limit": 100}).content)
+    last = sorted(messages, key=lambda x: x["timestamp"], reverse=True)[-1]["id"]
+    prev.append(messages)
+
+    while True:
         messages = json.loads(requests.get("http://canary.discordapp.com/api/v6/channels/" + id + "/messages", headers={"authorization": auth}, params={"before" : last, "limit" : 100}).content)
+        prev.append(messages)
+        last = sorted(messages, key=lambda x: x["timestamp"], reverse=True)[-1]["id"]
+        print("current number of parsed messages: {}".format(len(prev) * 100))
+        if len(messages) < 100:
+            return prev
 
-    prev = prev + messages
 
-    if len(messages) < 100:
-        print "Got to end of channel at " + str(len(prev)) + " messages"
-        return prev
-    else:
-        oldest = sorted(messages, key=lambda x: x["timestamp"], reverse=True)[-1]
-        return get_all_messages(auth, id, last=oldest["id"], prev=prev)
-
-def delete_all(auth, id, user, messages):
-    print "Deleting all messages in Channel ID [" + id + "] from the Username: " + user
+def _delete_all(auth, id, messages, words):
     for message in messages:
-        time.sleep(2.0) 
-        if delete_from_all_users:
-            isDeleted = False
-            
-            while isDeleted == False:
-                print "Message: ["+ message["id"] + "], deleting..."
-                n = requests.delete("http://canary.discordapp.com/api/v6/channels/" + id + "/messages/" + message["id"], headers={"authorization": auth})
-                print n
-                if n.status_code == 204:
-                    isDeleted = True
-                else:
-                    time.sleep(5.0) 
-        else:
-            print "Message: ["+ message["id"] + "], deleting..."
-            if (message["author"]["username"] == user):
-                isDeleted = False
-            
-                while isDeleted == False:
-                    n = requests.delete("http://canary.discordapp.com/api/v6/channels/" + id + "/messages/" + message["id"], headers={"authorization": auth})
-                    print n
-                    if n.status_code == 204:
-                        isDeleted = True
-                    else:
-                        time.sleep(5.0) 
-    print "all messages deleted"
+        for m in message:
+            for word in words:
+                # to match exact words. will not match "cat" if the message is cathrine.
+                if word.lower() in m["content"].lower().split(" "):
+                    delete_message(auth, id, m)
 
-delete_all(auth_token, channel_id, username, get_all_messages(auth_token, channel_id))
+def delete_message(auth, id, message):
+    isDeleted = False
+    print("Deleting message: {}. From user: {}".format(message["content"], message["author"]["username"]))
+    while isDeleted == False:
+        n = requests.delete("https://discordapp.com/api/v6/channels/" + id + "/messages/" + message["id"], headers={"authorization": auth})
+        print(n)
+        # if the message doesnt exist, we already deleted it
+        if n.status_code == 204 or n.status_code == 404:
+            isDeleted = True
+        else:
+            time.sleep(5.0)
+
+messages = get_all_messages(auth_token, channel_id)
+_delete_all(auth_token, channel_id, messages, words=words)
